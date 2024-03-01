@@ -1,4 +1,13 @@
 # cs224n
+Overall progress:
+
+Added support for - 
+1. Introduce major error in all 3 input fileds - description, vendor, and comment.
+2. Model is failing to learn when vendor and comment doesn't have error, but description has errors.
+3. Trying to understand and experiment with techniques to fix issue (#2) above 
+4. We also ability to do basic carbon emission calculations e.g. cost_usd * emission factor per given NAICS Title that is matched based on description+vendor+comment
+
+
 
 Business activity data generation prompts:
 
