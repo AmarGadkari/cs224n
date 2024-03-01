@@ -19,3 +19,7 @@ Water Supply and Irrigation Systems
 Sewage Treatment Facilities
 Steam and Air-Conditioning Supply
 New Single-Family Housing Construction (except For-Sale Builders)
+
+
+generate above datastructure naics_info for following NAICS Titles. It should have 10 business activities, 5 vendors for each activity, and 3 comments for each activity.
+- Timber Tract Operations
