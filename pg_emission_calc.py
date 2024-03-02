@@ -203,11 +203,11 @@ from scipy.stats import randint as sp_randint
 
 # Define the parameter grid
 param_dist = {
-    "n_estimators": [100, 200, 300, 500],
-    "max_depth": [10, 20, 30, None],
-    "min_samples_split": [2, 5, 10],
-    "min_samples_leaf": [1, 2, 4],
-    "max_features": ['sqrt', 'log2', None]
+    "n_estimators": [500, 600, 800, 1000, 1200],  # Increased range based on previous best
+    "max_depth": [None, 40, 50, 60],  # Explore deeper trees and some constraints
+    "min_samples_split": [8, 10, 12, 15],  # Narrowing down around the best found value
+    "min_samples_leaf": [1, 2, 3, 4],  # Exploring around the best found value
+    "max_features": ['sqrt', 'log2', None, 0.5, 0.7, 0.9]  # Adding exploration around 'log2' and fractional values
 }
 
 # Initialize the RandomForest model
@@ -221,7 +221,7 @@ random_search = RandomizedSearchCV(clf, param_distributions=param_dist, n_iter=n
 random_search.fit(X_train_tfidf, y_train)
 
 print("Best parameters:", random_search.best_params_)
-# Best parameters: {'n_estimators': 500, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': None}
+# Best parameters: {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
 
 best_params = random_search.best_params_
 best_clf = RandomForestClassifier(**best_params)
