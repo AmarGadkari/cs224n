@@ -10,6 +10,7 @@ Original file is located at
 !pip install pandas==1.5.3
 !pip install sentence-transformers accelerate -U
 !pip install transformers[torch] -U
+# !pip install accelerate -U --force-reinstall
 
 import accelerate
 import transformers
@@ -99,7 +100,7 @@ def introduce_major_errors(text):
 
 # Function to randomly apply either minor or major errors to a text
 def apply_random_error(text):
-    if random.random() < 0.40:  # 15% chance to introduce an error
+    if random.random() < 0.20:  # 15% chance to introduce an error
         #error_type = random.choice(['minor', 'major'])
         #if error_type == 'minor':
         #    return introduce_minor_errors(text)
@@ -132,14 +133,6 @@ def apply_errors_with_limit(row, fields, max_errors=2):
 
     return row
 
-import numpy as np
-import random
-import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
-
 # Define the fields to potentially introduce errors
 fields = ['Business Activity Description', 'Vendor', 'Comment']
 
@@ -147,9 +140,31 @@ fields = ['Business Activity Description', 'Vendor', 'Comment']
 activity_df = activity_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
 
 # Combine the possibly altered text fields into a new 'combined_text' column
-activity_df['combined_text'] = activity_df['Business Activity Description Error'] + " " + activity_df['Vendor Error'] + " " + activity_df['Comment Error']
+activity_df['combined_text'] = "Description: " + activity_df['Business Activity Description Error'] + " [SEP] " + \
+                               "Vendor: " + activity_df['Vendor Error'] + " [SEP] " + \
+                               "Comment: " + activity_df['Comment Error']
+# activity_df['combined_text'] = activity_df['Business Activity Description Error'] + " " + \
+#                               activity_df['Vendor Error'] + " " + \
+#                               activity_df['Comment Error']
 # Now, 'combined_text' contains the concatenated texts with either minor or major errors introduced
 
+# Apply errors to 2 or fewer fields for each row
+test_df = test_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
+# Combine the possibly altered text fields into a new 'combined_text' column
+test_df['combined_text'] = "Description: " + test_df['Business Activity Description Error'] + " [SEP] " + \
+                               "Vendor: " + test_df['Vendor Error'] + " [SEP] " + \
+                               "Comment: " + test_df['Comment Error']
+# test_df['combined_text'] = test_df['Business Activity Description Error'] + " " + \
+#                               test_df['Vendor Error'] + " " + \
+#                               test_df['Comment Error']
+
+import numpy as np
+import random
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
 
 # Split data into features and labels
 # activity_df['combined_text'] = activity_df['Business Activity Description'] + " " + activity_df['Vendor'] + " " + activity_df['Comment']
@@ -159,10 +174,12 @@ y = activity_df['label']  # Assuming 'label' is already encoded as numeric label
 # Splitting dataset into training and testing sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+
 # Initialize and fit the TF-IDF vectorizer on training data
 tfidf_vectorizer = TfidfVectorizer(max_features=1000)  # You can adjust max_features as needed
 X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
 
+'''
 # Initialize and fit the RandomForestClassifier
 clf = RandomForestClassifier(n_estimators=100, random_state=42)  # You can adjust parameters as needed
 clf.fit(X_train_tfidf, y_train)
@@ -178,6 +195,43 @@ print("Classification Report:\n", classification_report(y_test, y_pred))
 print("Accuracy:", accuracy_score(y_test, y_pred))
 
 # You can now use clf to make predictions on new data using the same tfidf_vectorizer to transform the new data
+'''
+
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from scipy.stats import randint as sp_randint
+
+# Define the parameter grid
+param_dist = {
+    "n_estimators": [100, 200, 300, 500],
+    "max_depth": [10, 20, 30, None],
+    "min_samples_split": [2, 5, 10],
+    "min_samples_leaf": [1, 2, 4],
+    "max_features": ['sqrt', 'log2', None]
+}
+
+# Initialize the RandomForest model
+clf = RandomForestClassifier(random_state=42)
+
+# Initialize RandomizedSearchCV
+n_iter_search = 20
+random_search = RandomizedSearchCV(clf, param_distributions=param_dist, n_iter=n_iter_search, cv=5, scoring='accuracy')
+
+# Fit the model
+random_search.fit(X_train_tfidf, y_train)
+
+print("Best parameters:", random_search.best_params_)
+
+best_params = random_search.best_params_
+best_clf = RandomForestClassifier(**best_params)
+# Note: X_train_tfidf and y_train should be defined as before
+best_clf.fit(X_train_tfidf, y_train)
+X_test_tfidf = tfidf_vectorizer.transform(X_test)
+y_pred = best_clf.predict(X_test_tfidf)
+
+# Evaluate the model
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("Classification Report:\n", classification_report(y_test, y_pred))
 
 import pandas as pd
 from sklearn.metrics import classification_report, accuracy_score
@@ -187,14 +241,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer  # Assuming you've a
 
 test_df['encoded_labels'] = test_df['2017 NAICS Title'].apply(lambda x: label_dict.get(x, -1))  # Unseen labels get -1
 
-# Apply errors to 2 or fewer fields for each row
-test_df = test_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
-# Combine the possibly altered text fields into a new 'combined_text' column
-test_df['combined_text'] = test_df['Business Activity Description Error'] + " " + test_df['Vendor Error'] + " " + test_df['Comment Error']
-
-# Prepare the test data features and labels
-# test_df['combined_text'] = test_df['Business Activity Description'] + " " + test_df['Vendor'] + " " + test_df['Comment']
-
 X_test_new = test_df['combined_text']  # Feature
 y_test_new = test_df['encoded_labels']  # Replace 'label' with the actual column name for labels in your test data
 
@@ -202,7 +248,7 @@ y_test_new = test_df['encoded_labels']  # Replace 'label' with the actual column
 X_test_new_tfidf = tfidf_vectorizer.transform(X_test_new)
 
 # Make predictions on the new test data
-y_pred_new = clf.predict(X_test_new_tfidf)
+y_pred_new = best_clf.predict(X_test_new_tfidf)
 
 # Evaluate the model on the new test data
 print("New Test Data - Classification Report:\n", classification_report(y_test_new, y_pred_new))
@@ -253,3 +299,8 @@ total_emissions = aggregated_emissions['Total_Emissions'].sum()
 
 print(f"\nTotal Count of All Rows: {total_count}")
 print(f"Total of Total Emissions: {total_emissions:.2f}")
+
+pd.set_option('display.max_colwidth', None)
+print(activity_df['combined_text'])
+print(test_df['combined_text'])
+pd.reset_option('display.max_colwidth')
