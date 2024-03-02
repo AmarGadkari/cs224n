@@ -221,6 +221,7 @@ random_search = RandomizedSearchCV(clf, param_distributions=param_dist, n_iter=n
 random_search.fit(X_train_tfidf, y_train)
 
 print("Best parameters:", random_search.best_params_)
+# Best parameters: {'n_estimators': 500, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': None}
 
 best_params = random_search.best_params_
 best_clf = RandomForestClassifier(**best_params)
