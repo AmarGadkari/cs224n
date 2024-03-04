@@ -30,31 +30,60 @@ drive = GoogleDrive(gauth)
 
 import pandas as pd
 
-epa_data = drive.CreateFile({'id': '1nOdK7YrAzx-2ZpKZCd620rbSG9qLLxZp'})
-epa_data.GetContentFile('EPA_EmissionsData.csv')
-factor_df = pd.read_csv('EPA_EmissionsData.csv')
-print(factor_df.head())
+file_folder = '/content/drive/My Drive/224_project/'
+# Specify Google Drive folder ID and file names
+folder_id = "1FwqVD1UvjaoSC8UksUBhVkPzPQy95iTg"
+train_file_name = 'sustainability_business_activities_training.csv'
+test_file_name = 'sustainability_business_activities_test.csv'
+EPA_file_name = 'EPA_EmissionData.csv'
 
-activity_data = drive.CreateFile({'id': '1smUkjfTvvHmx2QiCfDImKOOtdCSb4dTk'})
-activity_data.GetContentFile('business_activities_training_data.csv')
-activity_df = pd.read_csv('business_activities_training_data.csv')
-print(activity_df.head())
+# Define the fields to potentially introduce errors
+fields = ['Business Activity Description', 'Business Activity Vendor', 'Business Activity Comment']
+num_max_error_columns = 1
+naics_title_column_name = '2017 NAICS Title'
+activity_cost_column_name = 'Business Activity Cost USD'
+epa_emission_factor_column_name = 'Supply Chain Emission Factors without Margins'
+separator_string = " [SEP] "
+error_column_append_text = " Error"
+combined_text_column_name = 'combined_text'
+encoded_label_column_name = 'encoded_labels'
+
+demo_mode = True
+
+def find_file_id_by_name(drive, folder_id, file_name):
+    """Search for a file by name in the specified Google Drive folder."""
+    query = f"'{folder_id}' in parents and trashed=false and title='{file_name}'"
+    file_list = drive.ListFile({'q': query}).GetList()
+    return file_list[0]['id'] if file_list else None
+
+epa_file_id = find_file_id_by_name(drive, folder_id, EPA_file_name)
+epa_data = drive.CreateFile({'id': epa_file_id})
+epa_data.GetContentFile(EPA_file_name)
+factor_df = pd.read_csv(EPA_file_name)
+print(f"{len(factor_df)} of rows in factor csv")
+# print(factor_df.head())
+
+train_file_id = find_file_id_by_name(drive, folder_id, train_file_name)
+activity_data = drive.CreateFile({'id': train_file_id})
+activity_data.GetContentFile(train_file_name)
+activity_df = pd.read_csv(train_file_name)
+print(f"{len(activity_df)} of rows in training csv")
+# print(activity_df.head())
 
 # Load the test data
-activity_test_data = drive.CreateFile({'id': '1Q6Sm-lxT-cpOJpFeLg_Leyj3w28Ff9GY'})
-activity_test_data.GetContentFile('business_activities_test_data.csv')
-test_df = pd.read_csv('business_activities_test_data.csv')
-print(test_df.head())
-
-print(f"\n\nFactor Count: {factor_df.count()}")
-print(f"\n\nActivity Count: {activity_df.count()}")
+test_file_id = find_file_id_by_name(drive, folder_id, test_file_name)
+activity_test_data = drive.CreateFile({'id': test_file_id})
+activity_test_data.GetContentFile(test_file_name)
+test_df = pd.read_csv(test_file_name)
+print(f"{len(test_df)} of rows in test csv")
+# print(test_df.head())
 
 # import torch
 
 # device = torch.device('cpu')
 
-label_dict = {value: idx for idx, value in enumerate(activity_df['2017 NAICS Title'].unique())}
-activity_df['label'] = activity_df['2017 NAICS Title'].map(label_dict)
+label_dict = {value: idx for idx, value in enumerate(activity_df[naics_title_column_name].unique())}
+activity_df[encoded_label_column_name] = activity_df[naics_title_column_name].map(label_dict)
 
 import pandas as pd
 import numpy as np
@@ -109,7 +138,7 @@ def apply_random_error(text):
     return text
 
 
-def apply_errors_with_limit(row, fields, max_errors=2):
+def apply_errors_with_limit(row, fields, max_errors=num_max_error_columns):
     """
     Randomly apply errors to a limited number of fields in a row.
 
@@ -127,36 +156,53 @@ def apply_errors_with_limit(row, fields, max_errors=2):
     # Apply errors to the selected fields
     for field in fields:
         if field in fields_with_errors:
-            row[field + ' Error'] = apply_random_error(row[field])
+            row[field + error_column_append_text] = apply_random_error(row[field])
         else:
-            row[field + ' Error'] = row[field]
+            row[field + error_column_append_text] = row[field]
 
     return row
 
-# Define the fields to potentially introduce errors
-fields = ['Business Activity Description', 'Vendor', 'Comment']
+def combine_text_fields(row, fields):
+    """
+    Combine multiple text fields into a single combined text string.
+
+    Parameters:
+    - row: A DataFrame row containing the text fields.
+    - fields: A list of field names to be combined.
+
+    Returns:
+    - combined_text: A string containing the combined text from the specified fields.
+    """
+    combined_parts = []
+    for field in fields:
+        # Assuming the 'Error' versions of fields are already in the DataFrame
+        error_field_name = f"{field}{error_column_append_text}"
+        if error_field_name in row:
+            field_label = field.replace(" ", "_")  # Replace spaces with underscores for label
+            combined_parts.append(f"{field_label}: {row[error_field_name]}")
+    combined_text = separator_string.join(combined_parts)
+    return combined_text
+
+from datetime import datetime
+
+current_date = datetime.now()
+# Format month as 3-letter abbreviation and day as a number
+formatted_date = current_date.strftime('%b%d')
 
 # Apply errors to 2 or fewer fields for each row
 activity_df = activity_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
-
-# Combine the possibly altered text fields into a new 'combined_text' column
-activity_df['combined_text'] = "Description: " + activity_df['Business Activity Description Error'] + " [SEP] " + \
-                               "Vendor: " + activity_df['Vendor Error'] + " [SEP] " + \
-                               "Comment: " + activity_df['Comment Error']
-# activity_df['combined_text'] = activity_df['Business Activity Description Error'] + " " + \
-#                               activity_df['Vendor Error'] + " " + \
-#                               activity_df['Comment Error']
+# Apply the function to each row of the DataFrame to create the 'combined_text' column
+activity_df[combined_text_column_name] = activity_df.apply(lambda row: combine_text_fields(row, fields), axis=1)
 # Now, 'combined_text' contains the concatenated texts with either minor or major errors introduced
+temp_train_file_name = f'train_{formatted_date}.csv'
+activity_df.to_csv(temp_train_file_name)
 
 # Apply errors to 2 or fewer fields for each row
 test_df = test_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
 # Combine the possibly altered text fields into a new 'combined_text' column
-test_df['combined_text'] = "Description: " + test_df['Business Activity Description Error'] + " [SEP] " + \
-                               "Vendor: " + test_df['Vendor Error'] + " [SEP] " + \
-                               "Comment: " + test_df['Comment Error']
-# test_df['combined_text'] = test_df['Business Activity Description Error'] + " " + \
-#                               test_df['Vendor Error'] + " " + \
-#                               test_df['Comment Error']
+test_df[combined_text_column_name] = test_df.apply(lambda row: combine_text_fields(row, fields), axis=1)
+temp_test_file_name = f'test_{formatted_date}.csv'
+test_df.to_csv(temp_test_file_name)
 
 import numpy as np
 import random
@@ -168,8 +214,8 @@ from sklearn.metrics import classification_report, accuracy_score
 
 # Split data into features and labels
 # activity_df['combined_text'] = activity_df['Business Activity Description'] + " " + activity_df['Vendor'] + " " + activity_df['Comment']
-X = activity_df['combined_text']  # Feature
-y = activity_df['label']  # Assuming 'label' is already encoded as numeric labels
+X = activity_df[combined_text_column_name]  # Feature
+y = activity_df[encoded_label_column_name]  # Assuming 'label' is already encoded as numeric labels
 
 # Splitting dataset into training and testing sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -179,56 +225,88 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 tfidf_vectorizer = TfidfVectorizer(max_features=1000)  # You can adjust max_features as needed
 X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
 
-'''
-# Initialize and fit the RandomForestClassifier
-clf = RandomForestClassifier(n_estimators=100, random_state=42)  # You can adjust parameters as needed
-clf.fit(X_train_tfidf, y_train)
-
-# Transform the test data using the same TF-IDF vectorizer
-X_test_tfidf = tfidf_vectorizer.transform(X_test)
-
-# Make predictions on the test data
-y_pred = clf.predict(X_test_tfidf)
-
-# Evaluate the model
-print("Classification Report:\n", classification_report(y_test, y_pred))
-print("Accuracy:", accuracy_score(y_test, y_pred))
-
-# You can now use clf to make predictions on new data using the same tfidf_vectorizer to transform the new data
-'''
-
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from scipy.stats import randint as sp_randint
 
 # Define the parameter grid
 param_dist = {
-    "n_estimators": [500, 600, 800, 1000, 1200],  # Increased range based on previous best
-    "max_depth": [None, 40, 50, 60],  # Explore deeper trees and some constraints
-    "min_samples_split": [8, 10, 12, 15],  # Narrowing down around the best found value
-    "min_samples_leaf": [1, 2, 3, 4],  # Exploring around the best found value
-    "max_features": ['sqrt', 'log2', None, 0.5, 0.7, 0.9]  # Adding exploration around 'log2' and fractional values
+    "n_estimators": [600, 800, 1000, 1200, 1400],  # Increased range based on previous best
+    "max_depth": [50, 60, 80],  # Explore deeper trees and some constraints
+    "min_samples_split": [8, 10, 12, 15, 18],  # Narrowing down around the best found value
+    "min_samples_leaf": [1, 2, 3],  # Exploring around the best found value
+    "max_features": ['sqrt', 'log2', None]  # Adding exploration around 'log2'
 }
 
-# Initialize the RandomForest model
-clf = RandomForestClassifier(random_state=42)
+if demo_mode:
+  print("In the demo mode, not running the random_search....")
+else:
+  # Initialize the RandomForest model
+  clf = RandomForestClassifier(random_state=42)
 
-# Initialize RandomizedSearchCV
-n_iter_search = 20
-random_search = RandomizedSearchCV(clf, param_distributions=param_dist, n_iter=n_iter_search, cv=5, scoring='accuracy')
+  # Initialize RandomizedSearchCV
+  n_iter_search = 20
+  random_search = RandomizedSearchCV(clf, param_distributions=param_dist, n_iter=n_iter_search, cv=5, scoring='accuracy')
 
+  # Fit the model
+  random_search.fit(X_train_tfidf, y_train)
+
+  print("Best parameters:", random_search.best_params_)
+  # Best parameters: {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
+  # Best parameters: {'n_estimators': 1200, 'min_samples_split': 15, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
+  # Best parameters: {'n_estimators': 1000, 'min_samples_split': 15, 'min_samples_leaf': 1, 'max_features': 'log2', 'max_depth': 80}
+
+# Previously selected best parameter sets
+selected_params = [
+    {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60},
+    {'n_estimators': 1200, 'min_samples_split': 15, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60},
+    {'n_estimators': 1000, 'min_samples_split': 15, 'min_samples_leaf': 1, 'max_features': 'log2', 'max_depth': 80}
+]
+
+# Choose a parameter set (e.g., the first one)
+chosen_params = selected_params[0]
+if demo_mode:
+  print("In demo mode, moving forward with params: {chosen_params}")
+else:
+  chosen_params = random_search.best_params_
+# Initialize the RandomForest model with the chosen parameters
+best_clf = RandomForestClassifier(**chosen_params, random_state=42)
 # Fit the model
-random_search.fit(X_train_tfidf, y_train)
-
-print("Best parameters:", random_search.best_params_)
-# Best parameters: {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
-
-best_params = random_search.best_params_
-best_clf = RandomForestClassifier(**best_params)
-# Note: X_train_tfidf and y_train should be defined as before
 best_clf.fit(X_train_tfidf, y_train)
+# Transform the test data using the same TF-IDF vectorizer
 X_test_tfidf = tfidf_vectorizer.transform(X_test)
+# Make predictions on the test data
 y_pred = best_clf.predict(X_test_tfidf)
+
+# Convert y_test to a DataFrame for easier manipulation
+y_test_df = pd.DataFrame(y_test)
+y_test_df.reset_index(drop=True, inplace=True)
+
+# Convert y_pred to a DataFrame
+y_pred_df = pd.DataFrame(y_pred, columns=['Predicted'])
+
+# Concatenate the true labels, predicted labels, and the original text features for comparison
+results_df = pd.concat([y_test_df, y_pred_df, X_test.reset_index(drop=True)], axis=1)
+results_df.columns = ['True_Label', 'Predicted_Label', 'Features']
+
+# Filter to find where predictions were incorrect
+incorrect_predictions = results_df[results_df['True_Label'] != results_df['Predicted_Label']]
+
+'''
+# Add a prefix to 'Features' to indicate these are from true labels
+incorrect_predictions['Features_True_Label'] = 'True label: ' + incorrect_predictions['Features']
+# Since 'Features' based on 'Predicted_Label' doesn't exist directly, we replicate 'Features' column
+# and add a prefix to indicate these are hypothetically what you'd expect for predicted labels
+# Note: This does not fetch different 'Features' text for 'Predicted_Label'; it's illustrative
+incorrect_predictions['Features_Predicted_Label'] = 'Predicted label: ' + incorrect_predictions['Features']
+'''
+
+# Set option to display full text without truncation for investigation
+pd.set_option('display.max_colwidth', None)
+print(f"Rows {len(incorrect_predictions)} in Incorrect Predictions: ")
+print(incorrect_predictions[['True_Label', 'Predicted_Label', 'Features']])
+# Reset display option
+pd.reset_option('display.max_colwidth')
 
 # Evaluate the model
 print("Accuracy:", accuracy_score(y_test, y_pred))
@@ -240,10 +318,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer  # Assuming you've a
 
 # Assuming clf is your trained RandomForestClassifier and tfidf_vectorizer is your fitted TF-IDF vectorizer
 
-test_df['encoded_labels'] = test_df['2017 NAICS Title'].apply(lambda x: label_dict.get(x, -1))  # Unseen labels get -1
+test_df[encoded_label_column_name] = test_df[naics_title_column_name].apply(lambda x: label_dict.get(x, -1))  # Unseen labels get -1
 
-X_test_new = test_df['combined_text']  # Feature
-y_test_new = test_df['encoded_labels']  # Replace 'label' with the actual column name for labels in your test data
+X_test_new = test_df[combined_text_column_name]  # Feature
+y_test_new = test_df[encoded_label_column_name]  # Replace 'label' with the actual column name for labels in your test data
 
 # Transform the test data using the already fitted TF-IDF vectorizer
 X_test_new_tfidf = tfidf_vectorizer.transform(X_test_new)
@@ -256,7 +334,7 @@ print("New Test Data - Classification Report:\n", classification_report(y_test_n
 print("New Test Data - Accuracy:", accuracy_score(y_test_new, y_pred_new))
 
 # Convert y_pred_new and y_test_new to a DataFrame for easier manipulation
-results_df = pd.DataFrame({'combined_text': X_test_new, 'Actual Label': y_test_new, 'Predicted Label': y_pred_new})
+results_df = pd.DataFrame({combined_text_column_name: X_test_new, 'Actual Label': y_test_new, 'Predicted Label': y_pred_new})
 
 # Filter the DataFrame to only include rows where the prediction failed
 failed_predictions = results_df[results_df['Actual Label'] != results_df['Predicted Label']]
@@ -264,34 +342,34 @@ failed_predictions = results_df[results_df['Actual Label'] != results_df['Predic
 # Display the details of rows with failed predictions
 print("Rows with Failed Predictions:")
 pd.set_option('display.max_colwidth', None)  # For pandas versions < 1.0, use -1 instead of None
-print(failed_predictions[['combined_text']])
+print(failed_predictions)
 pd.reset_option('display.max_colwidth')
 
 # Ensure that '2017 NAICS Title' in both dataframes are of the same format for accurate mapping
 # Map 'Supply Chain Emission Factors without Margins' from factor_df to test_df based on '2017 NAICS Title'
-test_df['Emission Factor'] = test_df['2017 NAICS Title'].map(
-    factor_df.set_index('2017 NAICS Title')['Supply Chain Emission Factors without Margins']
+test_df['Emission Factor'] = test_df[naics_title_column_name].map(
+    factor_df.set_index(naics_title_column_name)[epa_emission_factor_column_name]
 )
 
 # Calculate the emissions for each row before grouping
-test_df['Calculated_Emissions'] = test_df['Emission Factor'] * test_df['Cost_USD']
+test_df['Calculated_Emissions'] = test_df['Emission Factor'] * test_df[activity_cost_column_name]
 
 # Selecting unique '2017 NAICS Title' and their corresponding 'Emission Factor' to avoid duplicates
-unique_emission_factors = test_df[['2017 NAICS Title', 'Emission Factor']].drop_duplicates()
+unique_emission_factors = test_df[[naics_title_column_name, 'Emission Factor']].drop_duplicates()
 
 # Step 1: Match NAICS Titles in test_df with those in factor_df
 # This step is simplified due to direct matching by '2017 NAICS Title'.
 # In real-world scenarios, consider complexities of matching titles.
 
 # Group 'test_df' by '2017 NAICS Title' and sum the 'Calculated_Emissions' for each group, also count the occurrences
-aggregated_emissions = test_df.groupby('2017 NAICS Title').agg(
+aggregated_emissions = test_df.groupby(naics_title_column_name).agg(
     Total_Emissions=('Calculated_Emissions', 'sum'),
     Count=('Calculated_Emissions', 'count')
 ).reset_index()
 
 # Print the total emissions and count for each title
 for index, row in aggregated_emissions.iterrows():
-    print(f"Title: {row['2017 NAICS Title']}, Total Emissions: {row['Total_Emissions']:.2f}, Count: {row['Count']}")
+    print(f"Title: {row[naics_title_column_name]}, Total Emissions: {row['Total_Emissions']:.2f}, Count: {row['Count']}")
 
 
 # Calculate and print overall totals using DataFrame functions
@@ -300,8 +378,3 @@ total_emissions = aggregated_emissions['Total_Emissions'].sum()
 
 print(f"\nTotal Count of All Rows: {total_count}")
 print(f"Total of Total Emissions: {total_emissions:.2f}")
-
-pd.set_option('display.max_colwidth', None)
-print(activity_df['combined_text'])
-print(test_df['combined_text'])
-pd.reset_option('display.max_colwidth')
