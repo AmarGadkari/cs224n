@@ -36,10 +36,14 @@ folder_id = "1FwqVD1UvjaoSC8UksUBhVkPzPQy95iTg"
 train_file_name = 'sustainability_business_activities_training.csv'
 test_file_name = 'sustainability_business_activities_test.csv'
 EPA_file_name = 'EPA_EmissionData.csv'
+movies_file_name = 'movies.csv'
 
 # Define the fields to potentially introduce errors
 fields = ['Business Activity Description', 'Business Activity Vendor', 'Business Activity Comment']
-num_max_error_columns = 1
+# num_min_error_columns = 3
+# num_max_error_columns = 3
+# row_error_rate = 0.5    # number between 0 and 1.0, 1.0 means every row has error, 0 means no row has error, 0.5 means half the rows have error
+# word_replace_error_rate = 0.3     # number between 0 and 1.0, 1.0 means every word is replaced in a given column, 0 means no word replaced, 0.5 means half the words replaced
 naics_title_column_name = '2017 NAICS Title'
 activity_cost_column_name = 'Business Activity Cost USD'
 epa_emission_factor_column_name = 'Supply Chain Emission Factors without Margins'
@@ -49,41 +53,53 @@ combined_text_column_name = 'combined_text'
 encoded_label_column_name = 'encoded_labels'
 
 demo_mode = True
+debug_print = False
 
-def find_file_id_by_name(drive, folder_id, file_name):
+def read_df_from_file(file_name):
+  file_id = find_file_id_by_name(file_name)
+  data = drive.CreateFile({'id': file_id})
+  data.GetContentFile(file_name)
+  df = pd.read_csv(file_name)
+  print(f"{len(df)} of rows in {file_name} csv")
+  return df
+
+def find_file_id_by_name(file_name):
     """Search for a file by name in the specified Google Drive folder."""
     query = f"'{folder_id}' in parents and trashed=false and title='{file_name}'"
     file_list = drive.ListFile({'q': query}).GetList()
     return file_list[0]['id'] if file_list else None
 
-epa_file_id = find_file_id_by_name(drive, folder_id, EPA_file_name)
-epa_data = drive.CreateFile({'id': epa_file_id})
-epa_data.GetContentFile(EPA_file_name)
-factor_df = pd.read_csv(EPA_file_name)
-print(f"{len(factor_df)} of rows in factor csv")
-# print(factor_df.head())
-
-train_file_id = find_file_id_by_name(drive, folder_id, train_file_name)
-activity_data = drive.CreateFile({'id': train_file_id})
-activity_data.GetContentFile(train_file_name)
-activity_df = pd.read_csv(train_file_name)
-print(f"{len(activity_df)} of rows in training csv")
-# print(activity_df.head())
-
-# Load the test data
-test_file_id = find_file_id_by_name(drive, folder_id, test_file_name)
-activity_test_data = drive.CreateFile({'id': test_file_id})
-activity_test_data.GetContentFile(test_file_name)
-test_df = pd.read_csv(test_file_name)
-print(f"{len(test_df)} of rows in test csv")
-# print(test_df.head())
-
-# import torch
-
-# device = torch.device('cpu')
+factor_df = read_df_from_file(EPA_file_name)
+movies_df = read_df_from_file(movies_file_name)
+activity_df = read_df_from_file(train_file_name)
+test_df = read_df_from_file(test_file_name)
 
 label_dict = {value: idx for idx, value in enumerate(activity_df[naics_title_column_name].unique())}
 activity_df[encoded_label_column_name] = activity_df[naics_title_column_name].map(label_dict)
+
+import pandas as pd
+import re
+
+def extract_words_from_movies(df, column_name):
+    words_list = []
+
+    # Regular expression to match only alphabetic characters
+    alpha_pattern = re.compile('[^a-zA-Z\s]')
+
+    for movie in df[column_name]:
+        # Remove punctuation and numeric characters
+        clean_movie = alpha_pattern.sub('', movie)
+
+        # Split into words and filter based on length
+        words = [word for word in clean_movie.split() if len(word) >= 4]
+
+        words_list.extend(words)
+
+    unique_words_set = set(words_list)
+    unique_words_list = list(unique_words_set)
+    return unique_words_list
+
+noise_words_list = extract_words_from_movies(movies_df, 'title')
 
 import pandas as pd
 import numpy as np
@@ -117,7 +133,7 @@ def introduce_minor_errors(text):
                 text = text[:error_index] + text[error_index + 1] + text[error_index] + text[error_index + 2:]
                 errors_introduced += 1
     return text
-
+'''
 def introduce_major_errors(text):
     """Replace or scramble parts of the text to introduce major errors."""
     # Randomly choose between scrambling or inserting irrelevant text
@@ -126,19 +142,41 @@ def introduce_major_errors(text):
     else:
         return "Irrelevant text " + ''.join(random.sample(text, len(text)))
     return text
+'''
+import random
+
+def introduce_errors_with_replacement(text, noise_words_list):
+    words = text.split()
+    num_words_to_replace = max(1, int(len(words) * word_replace_error_rate))  # Ensure at least one word is replaced
+
+    # Generate indices for the words to replace
+    indices_to_replace = random.sample(range(len(words)), num_words_to_replace)
+
+    for i in indices_to_replace:
+        # Ensure the replacement word is not the same as the original word
+        replacement_word = random.choice(noise_words_list)
+        while replacement_word == words[i]:
+            replacement_word = random.choice(noise_words_list)
+        words[i] = replacement_word
+
+    # Join the words back into a single string
+    modified_text = ' '.join(words)
+    return modified_text
+
+# Example usage:
+# unique_words_list = ['unique', 'words', 'list', 'from', 'movies']
+# text = "This is an example sentence to demonstrate the function."
+# modified_text = introduce_errors_with_replacement(text, unique_words_list)
+# print(modified_text)
 
 # Function to randomly apply either minor or major errors to a text
 def apply_random_error(text):
-    if random.random() < 0.20:  # 15% chance to introduce an error
-        #error_type = random.choice(['minor', 'major'])
-        #if error_type == 'minor':
-        #    return introduce_minor_errors(text)
-        #else:
-            return introduce_major_errors(text)   # only major errors
+    if random.random() <= row_error_rate:  # 15% chance to introduce an error
+      return introduce_errors_with_replacement(text, noise_words_list)   # only major errors
     return text
 
 
-def apply_errors_with_limit(row, fields, max_errors=num_max_error_columns):
+def apply_errors_with_limit(row, fields):
     """
     Randomly apply errors to a limited number of fields in a row.
 
@@ -148,10 +186,13 @@ def apply_errors_with_limit(row, fields, max_errors=num_max_error_columns):
     - max_errors: Maximum number of fields to apply errors to.
     """
     # Randomly decide how many fields to apply errors to (0 to max_errors)
-    errors_to_apply = random.randint(0, max_errors)
+    errors_to_apply = random.randint(num_min_error_columns, num_max_error_columns)
 
     # Randomly select the fields where errors will be applied
-    fields_with_errors = random.sample(fields, errors_to_apply)
+    if len(fields) <= num_min_error_columns:
+      fields_with_errors = fields
+    else:
+      fields_with_errors = random.sample(fields, errors_to_apply)
 
     # Apply errors to the selected fields
     for field in fields:
@@ -183,198 +224,249 @@ def combine_text_fields(row, fields):
     combined_text = separator_string.join(combined_parts)
     return combined_text
 
+# Example usage:
+#text = "This is an example sentence to demonstrate the function."
+#modified_text = introduce_errors_with_replacement(text, noise_words_list)
+#print(modified_text)
+
 from datetime import datetime
 
-current_date = datetime.now()
-# Format month as 3-letter abbreviation and day as a number
-formatted_date = current_date.strftime('%b%d')
+def add_noise(activity_df):
+  current_date = datetime.now()
+  # Format month as 3-letter abbreviation and day as a number
+  formatted_date = current_date.strftime('%b%d')
 
-# Apply errors to 2 or fewer fields for each row
-activity_df = activity_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
-# Apply the function to each row of the DataFrame to create the 'combined_text' column
-activity_df[combined_text_column_name] = activity_df.apply(lambda row: combine_text_fields(row, fields), axis=1)
-# Now, 'combined_text' contains the concatenated texts with either minor or major errors introduced
-temp_train_file_name = f'train_{formatted_date}.csv'
-activity_df.to_csv(temp_train_file_name)
+  # Apply errors to 2 or fewer fields for each row
+  error_activity_df = activity_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
+  # Apply the function to each row of the DataFrame to create the 'combined_text' column
+  error_activity_df[combined_text_column_name] = error_activity_df.apply(lambda row: combine_text_fields(row, fields), axis=1)
+  # Now, 'combined_text' contains the concatenated texts with either minor or major errors introduced
+  temp_train_file_name = f'train_{formatted_date}.csv'
+  error_activity_df.to_csv(temp_train_file_name)
 
-# Apply errors to 2 or fewer fields for each row
-test_df = test_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
-# Combine the possibly altered text fields into a new 'combined_text' column
-test_df[combined_text_column_name] = test_df.apply(lambda row: combine_text_fields(row, fields), axis=1)
-temp_test_file_name = f'test_{formatted_date}.csv'
-test_df.to_csv(temp_test_file_name)
+  # Apply errors to 2 or fewer fields for each row
+  error_test_df = test_df.apply(lambda row: apply_errors_with_limit(row, fields), axis=1)
+  # Combine the possibly altered text fields into a new 'combined_text' column
+  error_test_df[combined_text_column_name] = error_test_df.apply(lambda row: combine_text_fields(row, fields), axis=1)
+  temp_test_file_name = f'test_{formatted_date}.csv'
+  error_test_df.to_csv(temp_test_file_name)
+  return error_activity_df, error_test_df
 
 import numpy as np
 import random
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
-
-# Split data into features and labels
-# activity_df['combined_text'] = activity_df['Business Activity Description'] + " " + activity_df['Vendor'] + " " + activity_df['Comment']
-X = activity_df[combined_text_column_name]  # Feature
-y = activity_df[encoded_label_column_name]  # Assuming 'label' is already encoded as numeric labels
-
-# Splitting dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-
-# Initialize and fit the TF-IDF vectorizer on training data
-tfidf_vectorizer = TfidfVectorizer(max_features=1000)  # You can adjust max_features as needed
-X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
-
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from scipy.stats import randint as sp_randint
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Define the parameter grid
-param_dist = {
-    "n_estimators": [600, 800, 1000, 1200, 1400],  # Increased range based on previous best
-    "max_depth": [50, 60, 80],  # Explore deeper trees and some constraints
-    "min_samples_split": [8, 10, 12, 15, 18],  # Narrowing down around the best found value
-    "min_samples_leaf": [1, 2, 3],  # Exploring around the best found value
-    "max_features": ['sqrt', 'log2', None]  # Adding exploration around 'log2'
-}
+def train_test_model(error_activity_df, test_df):
 
-if demo_mode:
-  print("In the demo mode, not running the random_search....")
-else:
-  # Initialize the RandomForest model
-  clf = RandomForestClassifier(random_state=42)
+  # Split data into features and labels
+  # activity_df['combined_text'] = activity_df['Business Activity Description'] + " " + activity_df['Vendor'] + " " + activity_df['Comment']
+  X = error_activity_df[combined_text_column_name]  # Feature
+  y = error_activity_df[encoded_label_column_name]  # Assuming 'label' is already encoded as numeric labels
 
-  # Initialize RandomizedSearchCV
-  n_iter_search = 20
-  random_search = RandomizedSearchCV(clf, param_distributions=param_dist, n_iter=n_iter_search, cv=5, scoring='accuracy')
+  # Splitting dataset into training and testing sets
+  X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+
+  # Initialize and fit the TF-IDF vectorizer on training data
+  tfidf_vectorizer = TfidfVectorizer(max_features=1000)  # You can adjust max_features as needed
+  X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
+
+
+  # Define the parameter grid
+  param_dist = {
+      "n_estimators": [600, 800, 1000, 1200, 1400],  # Increased range based on previous best
+      "max_depth": [50, 60, 80],  # Explore deeper trees and some constraints
+      "min_samples_split": [8, 10, 12, 15, 18],  # Narrowing down around the best found value
+      "min_samples_leaf": [1, 2, 3],  # Exploring around the best found value
+      "max_features": ['sqrt', 'log2', None]  # Adding exploration around 'log2'
+  }
+
+  if demo_mode:
+    if debug_print is True:
+      print("In the demo mode, not running the random_search....")
+  else:
+    # Initialize the RandomForest model
+    clf = RandomForestClassifier(random_state=42)
+
+    # Initialize RandomizedSearchCV
+    n_iter_search = 20
+    random_search = RandomizedSearchCV(clf, param_distributions=param_dist, n_iter=n_iter_search, cv=5, scoring='accuracy')
+
+    # Fit the model
+    random_search.fit(X_train_tfidf, y_train)
+
+    print("Best parameters:", random_search.best_params_)
+    # Best parameters: {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
+    # Best parameters: {'n_estimators': 1200, 'min_samples_split': 15, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
+    # Best parameters: {'n_estimators': 1000, 'min_samples_split': 15, 'min_samples_leaf': 1, 'max_features': 'log2', 'max_depth': 80}
+
+  # Previously selected best parameter sets
+  selected_params = [
+      {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60},
+      {'n_estimators': 1200, 'min_samples_split': 15, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60},
+      {'n_estimators': 1000, 'min_samples_split': 15, 'min_samples_leaf': 1, 'max_features': 'log2', 'max_depth': 80}
+  ]
+
+  # Choose a parameter set (e.g., the first one)
+  chosen_params = selected_params[0]
+  if demo_mode:
+    if debug_print is True:
+      print(f"In demo mode, moving forward with params: {chosen_params}")
+  else:
+    chosen_params = random_search.best_params_
+  # Initialize the RandomForest model with the chosen parameters
+  best_clf = RandomForestClassifier(**chosen_params, random_state=42)
   # Fit the model
-  random_search.fit(X_train_tfidf, y_train)
+  best_clf.fit(X_train_tfidf, y_train)
+  # Transform the test data using the same TF-IDF vectorizer
+  X_test_tfidf = tfidf_vectorizer.transform(X_test)
+  # Make predictions on the test data
+  y_pred = best_clf.predict(X_test_tfidf)
 
-  print("Best parameters:", random_search.best_params_)
-  # Best parameters: {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
-  # Best parameters: {'n_estimators': 1200, 'min_samples_split': 15, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60}
-  # Best parameters: {'n_estimators': 1000, 'min_samples_split': 15, 'min_samples_leaf': 1, 'max_features': 'log2', 'max_depth': 80}
+  # Convert y_test to a DataFrame for easier manipulation
+  y_test_df = pd.DataFrame(y_test)
+  y_test_df.reset_index(drop=True, inplace=True)
 
-# Previously selected best parameter sets
-selected_params = [
-    {'n_estimators': 800, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60},
-    {'n_estimators': 1200, 'min_samples_split': 15, 'min_samples_leaf': 2, 'max_features': 'log2', 'max_depth': 60},
-    {'n_estimators': 1000, 'min_samples_split': 15, 'min_samples_leaf': 1, 'max_features': 'log2', 'max_depth': 80}
-]
+  # Convert y_pred to a DataFrame
+  y_pred_df = pd.DataFrame(y_pred, columns=['Predicted'])
 
-# Choose a parameter set (e.g., the first one)
-chosen_params = selected_params[0]
-if demo_mode:
-  print("In demo mode, moving forward with params: {chosen_params}")
+  # Concatenate the true labels, predicted labels, and the original text features for comparison
+  results_df = pd.concat([y_test_df, y_pred_df, X_test.reset_index(drop=True)], axis=1)
+  results_df.columns = ['True_Label', 'Predicted_Label', 'Features']
+
+  # Filter to find where predictions were incorrect
+  incorrect_predictions = results_df[results_df['True_Label'] != results_df['Predicted_Label']]
+
+  '''
+  # Add a prefix to 'Features' to indicate these are from true labels
+  incorrect_predictions['Features_True_Label'] = 'True label: ' + incorrect_predictions['Features']
+  # Since 'Features' based on 'Predicted_Label' doesn't exist directly, we replicate 'Features' column
+  # and add a prefix to indicate these are hypothetically what you'd expect for predicted labels
+  # Note: This does not fetch different 'Features' text for 'Predicted_Label'; it's illustrative
+  incorrect_predictions['Features_Predicted_Label'] = 'Predicted label: ' + incorrect_predictions['Features']
+  '''
+
+  # Set option to display full text without truncation for investigation
+  if debug_print is True:
+    pd.set_option('display.max_colwidth', None)
+    print(f"Rows {len(incorrect_predictions)} in Incorrect Predictions: ")
+    print(incorrect_predictions[['True_Label', 'Predicted_Label', 'Features']])
+    # Reset display option
+    pd.reset_option('display.max_colwidth')
+
+    # Evaluate the model
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+    print("Classification Report:\n", classification_report(y_test, y_pred))
+
+
+    # Assuming clf is your trained RandomForestClassifier and tfidf_vectorizer is your fitted TF-IDF vectorizer
+  test_df[encoded_label_column_name] = test_df[naics_title_column_name].apply(lambda x: label_dict.get(x, -1))  # Unseen labels get -1
+
+  X_test_new = test_df[combined_text_column_name]  # Feature
+  y_test_new = test_df[encoded_label_column_name]  # Replace 'label' with the actual column name for labels in your test data
+
+  # Transform the test data using the already fitted TF-IDF vectorizer
+  X_test_new_tfidf = tfidf_vectorizer.transform(X_test_new)
+
+  # Make predictions on the new test data
+  y_pred_new = best_clf.predict(X_test_new_tfidf)
+
+  # Evaluate the model on the new test data
+  if debug_print is True:
+    print("New Test Data - Classification Report:\n", classification_report(y_test_new, y_pred_new))
+    print("New Test Data - Accuracy:", accuracy_score(y_test_new, y_pred_new))
+  return accuracy_score(y_test_new, y_pred_new)*100, accuracy_score(y_test, y_pred)*100
+
+import matplotlib.pyplot as plt
+
+# Assuming these lists are used to collect the data.
+error_rates = []
+train_accuracies = []
+test_accuracies = []
+num_min_error_columns = 3
+num_max_error_columns = 3
+
+for i in range(12, 41):
+    row_error_rate = i / 40
+    word_replace_error_rate = row_error_rate
+    train_df_with_error, test_df_with_error = add_noise(activity_df)
+    train_accuracy, test_accuracy = train_test_model(train_df_with_error, test_df_with_error)
+    print(f"ErrRate: {row_error_rate}, TrainAccuracy: {train_accuracy:.3f}%, TestAccuracy:{test_accuracy:.3f}%")
+    error_rates.append(row_error_rate)
+    train_accuracies.append(train_accuracy)
+    test_accuracies.append(test_accuracy)
+
+# Plotting the results
+err_rate_plot_fname = "accuracy_vs_error_rate_" + datetime.now().strftime("%Y%m%d") + ".png"
+plt.figure(figsize=(10, 5))
+plt.plot(error_rates, train_accuracies, label='Train Accuracy')
+plt.plot(error_rates, test_accuracies, label='Test Accuracy')
+plt.xlabel('Error Rate')
+plt.ylabel('Accuracy (%)')
+plt.title('Train vs Test Accuracy by Error Rate')
+plt.legend()
+plt.grid(True)
+plt.savefig(err_rate_plot_fname)
+plt.show()
+
+
+# Check if the file already exists in Drive
+image_file_id = find_file_id_by_name(err_rate_plot_fname)
+# Depending on whether the file exists or not, create new or update existing
+if image_file_id:
+    # File exists, so update it
+    image_file = drive.CreateFile({'id': image_file_id})
+    image_file.SetContentFile(err_rate_plot_fname)
+    image_file.Upload()  # Upload the file.
 else:
-  chosen_params = random_search.best_params_
-# Initialize the RandomForest model with the chosen parameters
-best_clf = RandomForestClassifier(**chosen_params, random_state=42)
-# Fit the model
-best_clf.fit(X_train_tfidf, y_train)
-# Transform the test data using the same TF-IDF vectorizer
-X_test_tfidf = tfidf_vectorizer.transform(X_test)
-# Make predictions on the test data
-y_pred = best_clf.predict(X_test_tfidf)
+    # File does not exist, so create a new file
+    image_file = drive.CreateFile({'title': err_rate_plot_fname})
+    image_file.SetContentFile(err_rate_plot_fname)
+    image_file.Upload()
 
-# Convert y_test to a DataFrame for easier manipulation
-y_test_df = pd.DataFrame(y_test)
-y_test_df.reset_index(drop=True, inplace=True)
+print(f'Uploaded/Updated file with ID: {image_file["id"]}')
 
-# Convert y_pred to a DataFrame
-y_pred_df = pd.DataFrame(y_pred, columns=['Predicted'])
+import matplotlib.pyplot as plt
 
-# Concatenate the true labels, predicted labels, and the original text features for comparison
-results_df = pd.concat([y_test_df, y_pred_df, X_test.reset_index(drop=True)], axis=1)
-results_df.columns = ['True_Label', 'Predicted_Label', 'Features']
+# Plot the main figure
+fig, ax1 = plt.subplots(figsize=(10, 5))
 
-# Filter to find where predictions were incorrect
-incorrect_predictions = results_df[results_df['True_Label'] != results_df['Predicted_Label']]
+# Plot the line for training accuracy
+ax1.plot(error_rates, train_accuracies, 'o-', color='blue', label='Train Accuracy')
 
-'''
-# Add a prefix to 'Features' to indicate these are from true labels
-incorrect_predictions['Features_True_Label'] = 'True label: ' + incorrect_predictions['Features']
-# Since 'Features' based on 'Predicted_Label' doesn't exist directly, we replicate 'Features' column
-# and add a prefix to indicate these are hypothetically what you'd expect for predicted labels
-# Note: This does not fetch different 'Features' text for 'Predicted_Label'; it's illustrative
-incorrect_predictions['Features_Predicted_Label'] = 'Predicted label: ' + incorrect_predictions['Features']
-'''
+# Plot the line for testing accuracy
+ax1.plot(error_rates, test_accuracies, 'o--', color='red', label='Test Accuracy')
 
-# Set option to display full text without truncation for investigation
-pd.set_option('display.max_colwidth', None)
-print(f"Rows {len(incorrect_predictions)} in Incorrect Predictions: ")
-print(incorrect_predictions[['True_Label', 'Predicted_Label', 'Features']])
-# Reset display option
-pd.reset_option('display.max_colwidth')
+# Label the main figure
+ax1.set_xlabel('Error Rate')
+ax1.set_ylabel('Accuracy (%)')
+ax1.set_title('Train vs Test Accuracy by Error Rate')
+ax1.legend(loc='upper right')
+ax1.grid(True)
 
-# Evaluate the model
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print("Classification Report:\n", classification_report(y_test, y_pred))
+# Define the indices for the error rates of 0.3 to 0.7
+start_index = error_rates.index(0.3)
+end_index = error_rates.index(0.7) + 1  # Add 1 because slice end index is exclusive
 
-import pandas as pd
-from sklearn.metrics import classification_report, accuracy_score
-from sklearn.feature_extraction.text import TfidfVectorizer  # Assuming you've already fitted this with your training data
+# Add an inset to the main plot (the axes' rectangle [left, bottom, width, height] are in figure coordinates)
+ax2 = fig.add_axes([0.5, 0.2, 0.3, 0.3])
 
-# Assuming clf is your trained RandomForestClassifier and tfidf_vectorizer is your fitted TF-IDF vectorizer
+# Plot the zoomed-in range on the inset axes
+ax2.plot(error_rates[start_index:end_index], train_accuracies[start_index:end_index], 'o-', color='blue')
+ax2.plot(error_rates[start_index:end_index], test_accuracies[start_index:end_index], 'o--', color='red')
 
-test_df[encoded_label_column_name] = test_df[naics_title_column_name].apply(lambda x: label_dict.get(x, -1))  # Unseen labels get -1
+# Inset figure labels and titles
+ax2.set_title('Accuracy from ErrRate 0.3 to 0.7')
+ax2.set_xlabel('Error Rate')
+ax2.set_ylabel('Accuracy (%)')
+ax2.grid(True)
 
-X_test_new = test_df[combined_text_column_name]  # Feature
-y_test_new = test_df[encoded_label_column_name]  # Replace 'label' with the actual column name for labels in your test data
-
-# Transform the test data using the already fitted TF-IDF vectorizer
-X_test_new_tfidf = tfidf_vectorizer.transform(X_test_new)
-
-# Make predictions on the new test data
-y_pred_new = best_clf.predict(X_test_new_tfidf)
-
-# Evaluate the model on the new test data
-print("New Test Data - Classification Report:\n", classification_report(y_test_new, y_pred_new))
-print("New Test Data - Accuracy:", accuracy_score(y_test_new, y_pred_new))
-
-# Convert y_pred_new and y_test_new to a DataFrame for easier manipulation
-results_df = pd.DataFrame({combined_text_column_name: X_test_new, 'Actual Label': y_test_new, 'Predicted Label': y_pred_new})
-
-# Filter the DataFrame to only include rows where the prediction failed
-failed_predictions = results_df[results_df['Actual Label'] != results_df['Predicted Label']]
-
-# Display the details of rows with failed predictions
-print("Rows with Failed Predictions:")
-pd.set_option('display.max_colwidth', None)  # For pandas versions < 1.0, use -1 instead of None
-print(failed_predictions)
-pd.reset_option('display.max_colwidth')
-
-# Ensure that '2017 NAICS Title' in both dataframes are of the same format for accurate mapping
-# Map 'Supply Chain Emission Factors without Margins' from factor_df to test_df based on '2017 NAICS Title'
-test_df['Emission Factor'] = test_df[naics_title_column_name].map(
-    factor_df.set_index(naics_title_column_name)[epa_emission_factor_column_name]
-)
-
-# Calculate the emissions for each row before grouping
-test_df['Calculated_Emissions'] = test_df['Emission Factor'] * test_df[activity_cost_column_name]
-
-# Selecting unique '2017 NAICS Title' and their corresponding 'Emission Factor' to avoid duplicates
-unique_emission_factors = test_df[[naics_title_column_name, 'Emission Factor']].drop_duplicates()
-
-# Step 1: Match NAICS Titles in test_df with those in factor_df
-# This step is simplified due to direct matching by '2017 NAICS Title'.
-# In real-world scenarios, consider complexities of matching titles.
-
-# Group 'test_df' by '2017 NAICS Title' and sum the 'Calculated_Emissions' for each group, also count the occurrences
-aggregated_emissions = test_df.groupby(naics_title_column_name).agg(
-    Total_Emissions=('Calculated_Emissions', 'sum'),
-    Count=('Calculated_Emissions', 'count')
-).reset_index()
-
-# Print the total emissions and count for each title
-for index, row in aggregated_emissions.iterrows():
-    print(f"Title: {row[naics_title_column_name]}, Total Emissions: {row['Total_Emissions']:.2f}, Count: {row['Count']}")
-
-
-# Calculate and print overall totals using DataFrame functions
-total_count = aggregated_emissions['Count'].sum()
-total_emissions = aggregated_emissions['Total_Emissions'].sum()
-
-print(f"\nTotal Count of All Rows: {total_count}")
-print(f"Total of Total Emissions: {total_emissions:.2f}")
+# Show the plot
+plt.show()
